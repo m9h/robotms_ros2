@@ -1,0 +1,31 @@
+# Development and CI image: ROS 2 + OpenIGTLink, for building ros2_igtl_bridge
+# and the robotms_ros2 packages. ROS 2 has no Fedora binaries, so the robot
+# side runs here; the navigation side (Slicer, NaviNIBS, PlusServer) stays on
+# the host and talks to it over OpenIGTLink (TCP 18944).
+ARG ROS_DISTRO=jazzy
+FROM docker.io/library/ros:${ROS_DISTRO}-ros-base
+
+# Same commit as the neurofedora openigtlink package (3.1.0 snapshot), so the
+# Fedora side (Slicer, PlusServer) and this side use one library version.
+ARG OPENIGTLINK_COMMIT=94244fed7051e00cbcd4c341a7d7656be8ac404a
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake build-essential python3-pip python3-colcon-common-extensions \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/openigtlink/OpenIGTLink.git /opt/src/OpenIGTLink \
+    && git -C /opt/src/OpenIGTLink checkout --quiet ${OPENIGTLINK_COMMIT} \
+    && cmake -S /opt/src/OpenIGTLink -B /opt/build/OpenIGTLink \
+         -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+         -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /opt/build/OpenIGTLink -j4 \
+    && cmake --install /opt/build/OpenIGTLink \
+    && echo /usr/local/lib/igtl > /etc/ld.so.conf.d/openigtlink.conf \
+    && ldconfig
+# OpenIGTLink installs its CMake config under a versioned private directory.
+ENV OpenIGTLink_DIR=/usr/local/lib/igtl/cmake/igtl-3.1
+
+# pyigtl (MIT) drives the bridge from tests without 3D Slicer.
+# PIP_BREAK_SYSTEM_PACKAGES: needed on Ubuntu 24.04+, ignored by the older pip on 22.04 (Humble).
+RUN PIP_BREAK_SYSTEM_PACKAGES=1 pip3 install pyigtl==0.3.4
+
+WORKDIR /ws
